@@ -175,6 +175,22 @@ class I2sMic final : public hg::AudioIn {
   std::atomic<bool> capturing_{false};
 };
 
+// PDM MEMS microphone (ESP32-P4 CrowPanel): a reader task posts 20 ms PCM16
+// chunks while capturing. The mic is a PDM device on I2S0; the speaker takes
+// standard I2S on I2S1. Uses the same I2sMicConfig pin fields (sck=clk, sd=data).
+class PdmMic final : public hg::AudioIn {
+ public:
+  bool begin(const I2sMicConfig& cfg);
+  bool start(uint32_t sample_rate) override;
+  void stop() override;
+
+ private:
+  static void task(void* arg);
+  i2s_chan_handle_t rx_ = nullptr;
+  uint32_t rate_ = 16000;
+  std::atomic<bool> capturing_{false};
+};
+
 // I2S amplifier fed from a stream buffer by a writer task.
 class I2sSpeaker final : public hg::AudioOut {
  public:

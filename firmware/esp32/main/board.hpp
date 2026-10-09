@@ -52,6 +52,7 @@ struct LcdConfig {
 struct I2sMicConfig {
   bool enabled = false;
   int sck = -1, ws = -1, sd = -1;
+  bool pdm = false;  // PDM microphone (1-bit stream, I2S PDM RX) instead of standard I2S
 };
 
 struct I2sSpeakerConfig {

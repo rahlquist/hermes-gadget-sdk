@@ -24,6 +24,7 @@ hgp::ParallelDisplay g_parallel;
 hgp::RgbDisplay g_rgb;
 hgp::AmoledDisplay g_amoled;
 hgp::I2sMic g_mic;
+hgp::PdmMic g_pdm_mic;
 hgp::I2sSpeaker g_speaker;
 hgp::CodecAudio g_codec;
 hgp::CodecMic g_codec_mic;
@@ -198,7 +199,8 @@ extern "C" void app_main(void) {
   } else if (board.amoled.enabled && g_amoled.begin(board.amoled)) {
     hal.display = &g_amoled;
   }
-  if (board.mic.enabled && g_mic.begin(board.mic)) hal.mic = &g_mic;
+  if (board.mic.enabled && board.mic.pdm && g_pdm_mic.begin(board.mic)) hal.mic = &g_pdm_mic;
+  if (board.mic.enabled && !board.mic.pdm && g_mic.begin(board.mic)) hal.mic = &g_mic;
   if (board.speaker.enabled && g_speaker.begin(board.speaker)) hal.speaker = &g_speaker;
   if (board.axp2101 && g_power.begin(i2c_bus)) hal.power = &g_power;
   const bool audio_power = peripherals_ready && (!board.axp_audio_supply || g_power.enable_audio_supply());
@@ -218,6 +220,7 @@ extern "C" void app_main(void) {
                       : hal.display == &g_amoled ? "co5300"
                                                 : "none";
   parts.mic = hal.mic == &g_codec_mic ? (board.codec.mic == hgp::MicCodec::Es8311 ? "es8311" : "es7210")
+              : hal.mic == &g_pdm_mic ? "pdm"
               : hal.mic == &g_mic ? "i2s" : "none";
   parts.speaker = hal.speaker == &g_codec_speaker ?
       (board.codec.speaker == hgp::SpeakerCodec::Aw88298 ? "aw88298" : "es8311") :

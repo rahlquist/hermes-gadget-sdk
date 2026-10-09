@@ -28,6 +28,8 @@ namespace {
 #define HG_BOARD_NAME "tdisplay-s3"
 #elif CONFIG_HG_BOARD_CROWPANEL_21
 #define HG_BOARD_NAME "crowpanel-2.1"
+#elif CONFIG_HG_BOARD_CROWPANEL_P4_101
+#define HG_BOARD_NAME "crowpanel-advance-p4-10.1"
 #elif CONFIG_HG_BOARD_WS_ESP32S3_LCD_154
 #define HG_BOARD_NAME "waveshare-esp32s3-lcd-154"
 #else
@@ -418,6 +420,27 @@ BoardConfig make() {
   b.buttons = {-1, -1, -1, -1};
   b.talk_label = "BOOT";
   b.cancel_label = "Knob";
+  return b;
+}
+#elif CONFIG_HG_BOARD_CROWPANEL_P4_101
+// Elecrow CrowPanel Advanced 10.1-inch ESP32-P4 (V1.1). Audio pin map from the
+// V1.1 schematic; Wi-Fi runs on the ESP32-C6 companion over SDIO (see the
+// board's sdkconfig.defaults for esp_hosted/esp_wifi_remote). The 1024x600
+// MIPI-DSI panel and GT911 touch are not yet driven (no DSI display port), so
+// the display and touch stay disabled in this bring-up; BOOT is the TALK key.
+BoardConfig make() {
+  BoardConfig b{};
+  b.name = kBoardName;
+  // PDM microphone on I2S0: clk GPIO24, data GPIO26 (schematic MIC_MCLK/MIC_SD2).
+  b.mic = {true, /*sck*/ 24, /*ws*/ -1, /*sd*/ 26, /*pdm*/ true};
+  // Speaker amp fed by standard I2S on I2S1: BCLK GPIO22, WS GPIO21, DATA GPIO23.
+  b.speaker = {true, /*bclk*/ 22, /*ws*/ 21, /*dout*/ 23};
+  // GT911 touch on I2C1 (SDA GPIO45, SCL GPIO46); enabled once the DSI panel
+  // and touch driver land. Kept disabled so this build is audio + Wi-Fi only.
+  b.i2c = {45, 46, 400000};
+  b.buttons = {35, -1, -1, -1};  // BOOT (GPIO35) is TALK
+  b.talk_label = "BOOT";
+  b.cancel_label = "Swipe down";
   return b;
 }
 #elif CONFIG_HG_BOARD_CUSTOM

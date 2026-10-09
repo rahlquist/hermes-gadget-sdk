@@ -10,6 +10,7 @@ idf_component_register(
         "board.cpp"
         "port_amoled.cpp"
         "port_audio.cpp"
+        "port_pdm_mic.cpp"
         "port_buttons.cpp"
         "port_codec.cpp"
         "port_cores3.cpp"
