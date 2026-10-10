@@ -423,21 +423,59 @@ BoardConfig make() {
   return b;
 }
 #elif CONFIG_HG_BOARD_CROWPANEL_P4_101
-// Elecrow CrowPanel Advanced 10.1-inch ESP32-P4 (V1.1). Audio pin map from the
-// V1.1 schematic; Wi-Fi runs on the ESP32-C6 companion over SDIO (see the
-// board's sdkconfig.defaults for esp_hosted/esp_wifi_remote). The 1024x600
-// MIPI-DSI panel and GT911 touch are not yet driven (no DSI display port), so
-// the display and touch stay disabled in this bring-up; BOOT is the TALK key.
+// Elecrow CrowPanel Advanced 10.1-inch ESP32-P4 (V1.1).
+//
+// Audio pin map from the V1.1 schematic (verified working):
+//   PDM microphone on I2S0: clk GPIO24, data GPIO26 (MIC_MCLK / MIC_SD2)
+//   Speaker amp on I2S1:   BCLK GPIO22, WS GPIO21, DATA GPIO23
+//   BOOT button (TALK):    GPIO35
+// Wi-Fi runs on the ESP32-C6 companion over SDIO (see the board's
+// sdkconfig.defaults for esp_hosted / esp_wifi_remote).
+//
+// Display: 1024x600 MIPI-DSI panel, EK79007 controller, RGB565. The DSI bus
+// uses dedicated SoC pins, so no GPIO numbers are configured for it. The PHY
+// is powered by internal LDO channel 3 at 2500 mV; the LCD reset line is not
+// bonded (NC); the backlight is GPIO31, active-high.
+//
+// Touch: GT911 on I2C0 (SDA GPIO45, SCL GPIO46), INT GPIO42, RST GPIO40.
+// Per the V1.1 netlist: INT_TP has no pull (R75 is a 2K_NC footprint), and
+// RESET_TP is pulled up to VDDPST_5 through R74, so reset is active-low.
+// The GT911 latches its I2C address from the INT level at reset release; on
+// this unit it answers at 0x14, so the driver probes both 0x14 and 0x5D.
 BoardConfig make() {
   BoardConfig b{};
   b.name = kBoardName;
-  // PDM microphone on I2S0: clk GPIO24, data GPIO26 (schematic MIC_MCLK/MIC_SD2).
+  // PDM microphone on I2S0: clk GPIO24, data GPIO26.
   b.mic = {true, /*sck*/ 24, /*ws*/ -1, /*sd*/ 26, /*pdm*/ true};
-  // Speaker amp fed by standard I2S on I2S1: BCLK GPIO22, WS GPIO21, DATA GPIO23.
-  b.speaker = {true, /*bclk*/ 22, /*ws*/ 21, /*dout*/ 23};
-  // GT911 touch on I2C1 (SDA GPIO45, SCL GPIO46); enabled once the DSI panel
-  // and touch driver land. Kept disabled so this build is audio + Wi-Fi only.
+  // Speaker amp (NS4168) on I2S1: BCLK GPIO22, WS GPIO21, DATA GPIO23, with an
+  // active-low amplifier enable on GPIO30 (AUDIO_GPIO_CTRL in the schematic).
+  b.speaker = {true, /*bclk*/ 22, /*ws*/ 21, /*dout*/ 23, /*pa*/ 30, /*pa_active_low*/ true};
+  // 1024x600 MIPI-DSI EK79007 panel. The bus carries no GPIO wiring.
+  b.lcd.enabled = true;
+  b.lcd.width = 1024;
+  b.lcd.height = 600;
+  b.lcd.swap_xy = false;
+  b.lcd.mirror_x = false;
+  b.lcd.mirror_y = false;
+  b.lcd.invert = false;
+  b.lcd.backlight = 31;         // active-high, not inverted
+  b.lcd.backlight_invert = false;
+  b.lcd.rst = -1;               // LCD reset is NC on V1.1
+  b.lcd.bus.type = LcdBus::Type::Dsi;
+  b.lcd.dsi.lanes = 2;
+  b.lcd.dsi.lane_bit_rate_mbps = 900;
+  b.lcd.dsi.dpi_clock_mhz = 51;
+  b.lcd.dsi.ldo_channel = 3;    // internal LDO channel 3 powers the DSI PHY
+  b.lcd.dsi.ldo_voltage_mv = 2500;
+  b.lcd.dsi.use_dma2d = true;
+  // GT911 touch on I2C0.
   b.i2c = {45, 46, 400000};
+  b.touch.enabled = true;
+  b.touch.controller = TouchController::Gt911;
+  b.touch.width = 1024;
+  b.touch.height = 600;
+  b.touch.rst = 40;             // active-low (pulled up through R74)
+  b.touch.int_pin = 42;         // no external pull (R75 not fitted)
   b.buttons = {35, -1, -1, -1};  // BOOT (GPIO35) is TALK
   b.talk_label = "BOOT";
   b.cancel_label = "Swipe down";

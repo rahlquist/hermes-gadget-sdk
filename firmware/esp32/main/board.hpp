@@ -12,7 +12,7 @@ namespace hgp {
 // How a parallel panel is wired. An I80 panel uses eight data lines and a write
 // strobe here; an RGB panel is wired in LcdConfig::rgb.
 struct LcdBus {
-  enum class Type : uint8_t { Spi, I80, Rgb };
+  enum class Type : uint8_t { Spi, I80, Rgb, Dsi };
   Type type = Type::Spi;
   int data[8] = {-1, -1, -1, -1, -1, -1, -1, -1};
   int wr = -1;
@@ -32,6 +32,21 @@ struct RgbPanelConfig {
 
 enum class LcdController { St7789, Box3, CoreS3, St77916 };
 
+// A MIPI-DSI panel: a serial bus on dedicated SoC pins (no GPIO numbers), a
+// PHY that needs its own internal LDO rail, and a DPI clock. Only the
+// CrowPanel P4 uses this today.
+struct DsiPanelConfig {
+  int lanes = 2;                  // DSI data lanes
+  int lane_bit_rate_mbps = 900;   // per-lane bit rate
+  int dpi_clock_mhz = 51;         // pixel clock
+  int ldo_channel = 3;            // internal LDO channel powering the DSI PHY
+  int ldo_voltage_mv = 2500;      // that channel's voltage
+  bool use_dma2d = true;          // DMA2D-assisted flush, falling back to a CPU copy
+  // Video timing; the P4's EK79007 panel's porches are wide.
+  int hsync_pulse_width = 70, hsync_back_porch = 160, hsync_front_porch = 160;
+  int vsync_pulse_width = 10, vsync_back_porch = 23, vsync_front_porch = 12;
+};
+
 struct LcdConfig {
   bool enabled = false;
   uint16_t width = 320, height = 240;  // after rotation
@@ -41,6 +56,7 @@ struct LcdConfig {
   int spi_mhz = 40;
   LcdBus bus{};
   RgbPanelConfig rgb{};
+  DsiPanelConfig dsi{};  // used when bus.type == Type::Dsi
   LcdController controller = LcdController::St7789;
   bool reset_active_high = false;
   bool backlight_invert = false;  // active-low GPIO backlight, independent of pixel inversion
@@ -58,6 +74,8 @@ struct I2sMicConfig {
 struct I2sSpeakerConfig {
   bool enabled = false;
   int bclk = -1, ws = -1, dout = -1;
+  int pa = -1;               // external amplifier enable GPIO; -1 = none
+  bool pa_active_low = false;  // amp enable is active-low (driven low to enable)
 };
 
 // Which vendor bring-up table a CO5300 panel needs. The round 466x466 1.75"
@@ -106,16 +124,21 @@ struct CodecAudioConfig {
 };
 
 // Capacitive touch on the I2C bus: hold to talk, tap, swipe down to cancel.
-enum class TouchController { Cst9217, Box3, Ft5x06, Cst816 };
+enum class TouchController { Cst9217, Box3, Ft5x06, Cst816, Gt911 };
 
 struct TouchConfig {
   bool enabled = false;
   uint8_t addr = 0x5A;
   int rst = -1;
   uint16_t width = 0, height = 0;
+  bool swap_xy = false;
   bool mirror_x = false, mirror_y = false;
   int16_t offset_y = 0;  // subtracted from y when the UI starts below the panel's first row
   TouchController controller = TouchController::Cst9217;
+  // GT911 only: its INT line is left low at reset release to select the 0x14
+  // address, high for 0x5D. The I2C address follows the INT level, so it is
+  // derived here rather than taken from `addr`.
+  int int_pin = -1;
 };
 
 // A key whose level is read from a TCA9554 or PCF8574 I/O expander input (e.g.

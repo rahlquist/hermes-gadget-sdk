@@ -30,6 +30,11 @@
 #include "esp_lcd_io_i80.h"
 #include "esp_lcd_types.h"
 #include "esp_lcd_touch.h"
+// esp_lcd_mipi_dsi.h guards its contents on SOC_MIPI_DSI_SUPPORTED, which needs
+// soc_caps.h included first; without it the DSI types silently vanish on
+// targets that do have a DSI host (ESP32-P4).
+#include "soc/soc_caps.h"
+#include "esp_lcd_mipi_dsi.h"
 #include "esp_websocket_client.h"
 #include "esp_http_server.h"
 #include "freertos/semphr.h"
@@ -139,6 +144,36 @@ class RgbDisplay final : public hg::Display {
   SemaphoreHandle_t done_ = nullptr;
 };
 
+// MIPI-DSI panel (CrowPanel Advanced P4, EK79007 controller). The DSI host
+// scans out its own framebuffer continuously; we keep a second one that the
+// core draws into and copy the dirty rows across on flush.
+class DsiDisplay final : public hg::Display {
+ public:
+  bool begin(const LcdConfig& cfg, const DsiPanelConfig& dsi);
+  const char* controller_name() const { return controller_name_; }
+  // A live counter diag reads at report time (see diag's flush_counter).
+  const std::atomic<uint32_t>& flush_counter() const { return flushes_; }
+  hg::DisplayInfo info() const override;
+  uint16_t* framebuffer() override { return fb_; }
+  void flush(uint16_t y0, uint16_t y1) override;
+  void set_backlight(uint8_t percent) override;
+
+ private:
+  // Runs in the DMA2D completion ISR; see the definition in port_dsi.cpp.
+  static bool on_color_done(esp_lcd_panel_handle_t panel, esp_lcd_dpi_panel_event_data_t* edata, void* ctx);
+  // Waits for the DMA2D copy to land; the CPU path is already done.
+  bool wait_copy(uint32_t timeout_us);
+  LcdConfig cfg_{};
+  DsiPanelConfig dsi_{};
+  const char* controller_name_ = "ek79007-dsi";
+  esp_lcd_dsi_bus_handle_t bus_ = nullptr;
+  esp_lcd_panel_io_handle_t io_ = nullptr;
+  esp_lcd_panel_handle_t panel_ = nullptr;
+  uint16_t* fb_ = nullptr;
+  bool use_dma2d_ = true;
+  std::atomic<uint32_t> flushes_{0};  // draw_bitmap calls that returned ESP_OK
+};
+
 class SpiDisplay final : public hg::Display {
  public:
   bool begin(const LcdConfig& cfg, i2c_master_bus_handle_t bus);
@@ -204,6 +239,7 @@ class I2sSpeaker final : public hg::AudioOut {
 
  private:
   static void task(void* arg);
+  void set_pa(bool on);
   i2s_chan_handle_t tx_ = nullptr;
   StreamBufferHandle_t buffer_ = nullptr;
   std::atomic<uint32_t> rate_{16000};
@@ -211,6 +247,8 @@ class I2sSpeaker final : public hg::AudioOut {
   std::atomic<bool> draining_{false};
   std::atomic<bool> flush_{false};
   std::atomic<uint8_t> volume_{70};
+  int pa_ = -1;               // external amplifier enable GPIO; -1 = none
+  bool pa_active_low_ = false;
 };
 
 // I80 (8-bit parallel) ST7789 panel via esp_lcd. Panels on LCD modules that
@@ -328,6 +366,7 @@ class TouchInput {
  private:
   static void task(void* arg);
   bool read_touch(TouchSample& out);
+  bool begin_gt911(i2c_master_bus_handle_t bus);
   bool begin_box_touch(i2c_master_bus_handle_t bus);
   bool read_key(bool& pressed);
   bool sample_encoder(int& direction);
@@ -467,6 +506,9 @@ struct Parts {
   bool touch = false;
   bool key = false;
   i2c_master_bus_handle_t i2c = nullptr;  // scanned by `diag`
+  uint32_t display_flushes = 0;  // flushes actually submitted (proves the render path ran)
+  // Read live at report time; the parts struct is filled before the first render.
+  const std::atomic<uint32_t>* flush_counter = nullptr;
 };
 
 // Starts keeping a RAM copy of recent log lines. Call first in app_main.

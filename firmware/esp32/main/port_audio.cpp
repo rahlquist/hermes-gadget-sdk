@@ -5,6 +5,7 @@
 #include <algorithm>
 #include <cstring>
 
+#include "driver/gpio.h"
 #include "driver/i2s_std.h"
 #include "esp_heap_caps.h"
 #include "esp_log.h"
@@ -92,6 +93,15 @@ void I2sMic::task(void* arg) {
 // Speaker
 
 bool I2sSpeaker::begin(const I2sSpeakerConfig& cfg) {
+  pa_ = cfg.pa;
+  pa_active_low_ = cfg.pa_active_low;
+  if (pa_ >= 0) {
+    // External amplifier enable (e.g. NS4168 on the CrowPanel P4, active-low on
+    // GPIO30). Start muted; the task raises it only while samples are playing.
+    gpio_reset_pin(static_cast<gpio_num_t>(pa_));
+    gpio_set_direction(static_cast<gpio_num_t>(pa_), GPIO_MODE_OUTPUT);
+    set_pa(false);
+  }
   i2s_chan_config_t chan = I2S_CHANNEL_DEFAULT_CONFIG(I2S_NUM_0, I2S_ROLE_MASTER);
   chan.auto_clear = true;  // silence on underrun instead of repeating the last buffer
   if (i2s_new_channel(&chan, &tx_, nullptr) != ESP_OK) return false;
@@ -103,8 +113,13 @@ bool I2sSpeaker::begin(const I2sSpeakerConfig& cfg) {
   else buffer_ = xStreamBufferCreate(16 * 1024, 1);
   if (!buffer_) return false;
   xTaskCreate(&I2sSpeaker::task, "hg-spk", 4096, this, 7, nullptr);
-  ESP_LOGI(TAG, "speaker ready");
+  ESP_LOGI(TAG, "speaker ready%s", pa_ >= 0 ? " (with amplifier enable)" : "");
   return true;
+}
+
+void I2sSpeaker::set_pa(bool on) {
+  if (pa_ < 0) return;
+  gpio_set_level(static_cast<gpio_num_t>(pa_), (on != pa_active_low_) ? 1 : 0);
 }
 
 bool I2sSpeaker::begin(uint32_t sample_rate) {
@@ -151,6 +166,7 @@ void I2sSpeaker::task(void* arg) {
       xStreamBufferReset(self->buffer_);
       if (enabled) {
         i2s_channel_disable(self->tx_);
+        self->set_pa(false);
         enabled = false;
       }
     }
@@ -160,6 +176,7 @@ void I2sSpeaker::task(void* arg) {
         self->draining_ = false;  // everything queued has been written out
         if (enabled) {
           i2s_channel_disable(self->tx_);
+          self->set_pa(false);
           enabled = false;
         }
       }
@@ -171,6 +188,7 @@ void I2sSpeaker::task(void* arg) {
         i2s_std_clk_config_t clk = I2S_STD_CLK_DEFAULT_CONFIG(want);
         if (i2s_channel_reconfig_std_clock(self->tx_, &clk) == ESP_OK) applied_rate = want;
       }
+      self->set_pa(true);  // amplifier on before the first sample, avoids a click
       i2s_channel_enable(self->tx_);
       enabled = true;
     }
