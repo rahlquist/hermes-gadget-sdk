@@ -18,6 +18,7 @@ idf_component_register(
         "port_console.cpp"
         "port_diag.cpp"
         "port_display.cpp"
+        "port_dsi.cpp"
         "port_events.cpp"
         "port_ota.cpp"
         "port_parallel.cpp"

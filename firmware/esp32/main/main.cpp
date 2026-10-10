@@ -22,6 +22,7 @@ hgp::WsTransport g_transport;
 hgp::SpiDisplay g_display;
 hgp::ParallelDisplay g_parallel;
 hgp::RgbDisplay g_rgb;
+hgp::DsiDisplay g_dsi;
 hgp::AmoledDisplay g_amoled;
 hgp::I2sMic g_mic;
 hgp::PdmMic g_pdm_mic;
@@ -189,7 +190,9 @@ extern "C" void app_main(void) {
   if (board.cores3 && peripherals_ready)
     g_display.board_backlight = [](uint8_t percent) { g_cores3.set_backlight(percent); };
   if (peripherals_ready && board.lcd.enabled) {
-    if (board.lcd.bus.type == hgp::LcdBus::Type::Rgb) {
+    if (board.lcd.bus.type == hgp::LcdBus::Type::Dsi) {
+      if (g_dsi.begin(board.lcd, board.lcd.dsi)) hal.display = &g_dsi;
+    } else if (board.lcd.bus.type == hgp::LcdBus::Type::Rgb) {
       if (g_rgb.begin(board.lcd, i2c_bus)) hal.display = &g_rgb;
     } else if (board.lcd.bus.type == hgp::LcdBus::Type::I80) {
       if (g_parallel.begin(board.lcd, hgp::lcd_power_pin(board))) hal.display = &g_parallel;
@@ -217,6 +220,7 @@ extern "C" void app_main(void) {
   parts.display = hal.display == &g_display ? g_display.controller_name()
                       : hal.display == &g_parallel ? "st7789-i80"
                       : hal.display == &g_rgb ? "st7701-rgb"
+                      : hal.display == &g_dsi ? g_dsi.controller_name()
                       : hal.display == &g_amoled ? "co5300"
                                                 : "none";
   parts.mic = hal.mic == &g_codec_mic ? (board.codec.mic == hgp::MicCodec::Es8311 ? "es8311" : "es7210")
@@ -228,6 +232,9 @@ extern "C" void app_main(void) {
   parts.touch = touch && g_touch.has_touch();
   parts.key = touch && g_touch.has_key();
   parts.i2c = i2c_bus;
+  // The flush count is read live at report time, not snapshotted here: the
+  // parts struct is filled before the app's first render.
+  if (hal.display == &g_dsi) parts.flush_counter = &g_dsi.flush_counter();
   hgp::diag::set_parts(parts);
   hgp::diag::log_boot_summary();
 

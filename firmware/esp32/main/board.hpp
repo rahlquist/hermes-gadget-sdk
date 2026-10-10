@@ -76,6 +76,8 @@ struct I2sSpeakerConfig {
   int bclk = -1, ws = -1, dout = -1;
   int pa = -1;               // external amplifier enable GPIO; -1 = none
   bool pa_active_low = false;  // amp enable is active-low (driven low to enable)
+  bool stereo = false;       // I2S_SLOT_MODE_STEREO with both slots (CrowPanel P4 NS4168)
+  bool left_align = false;   // left-justified + bit_shift framing (paired with stereo)
 };
 
 // Which vendor bring-up table a CO5300 panel needs. The round 466x466 1.75"

@@ -21,10 +21,21 @@ constexpr size_t kMicChunk = 320;           // 20 ms at 16 kHz
 constexpr size_t kSpeakerBuffer = 48 * 1024;  // ~1.5 s at 16 kHz; the server paces 0.5 s ahead
 constexpr size_t kSpeakerChunk = 512;       // samples per I2S write
 
-i2s_std_config_t std_config(uint32_t rate, i2s_data_bit_width_t bits, int bclk, int ws, int dout, int din) {
+i2s_std_config_t std_config(uint32_t rate, i2s_data_bit_width_t bits, int bclk, int ws, int dout, int din,
+                           bool stereo = false, bool left_align = false) {
   i2s_std_config_t cfg = {};
   cfg.clk_cfg = I2S_STD_CLK_DEFAULT_CONFIG(rate);
-  cfg.slot_cfg = I2S_STD_PHILIPS_SLOT_DEFAULT_CONFIG(bits, I2S_SLOT_MODE_MONO);
+  cfg.slot_cfg = I2S_STD_PHILIPS_SLOT_DEFAULT_CONFIG(bits, stereo ? I2S_SLOT_MODE_STEREO : I2S_SLOT_MODE_MONO);
+  if (stereo) cfg.slot_cfg.slot_mask = I2S_STD_SLOT_BOTH;
+  if (left_align) {
+    // Left-justified framing with a one-bit shift, as the CrowPanel P4's NS4168
+    // amp expects (matches Elecrow's bsp_audio.c). ws_width 16 bit like the data.
+    cfg.slot_cfg.ws_width = bits;
+    cfg.slot_cfg.left_align = true;
+    cfg.slot_cfg.big_endian = false;
+    cfg.slot_cfg.bit_order_lsb = false;
+    cfg.slot_cfg.bit_shift = true;
+  }
   cfg.gpio_cfg.mclk = I2S_GPIO_UNUSED;
   cfg.gpio_cfg.bclk = static_cast<gpio_num_t>(bclk);
   cfg.gpio_cfg.ws = static_cast<gpio_num_t>(ws);
@@ -95,6 +106,8 @@ void I2sMic::task(void* arg) {
 bool I2sSpeaker::begin(const I2sSpeakerConfig& cfg) {
   pa_ = cfg.pa;
   pa_active_low_ = cfg.pa_active_low;
+  stereo_ = cfg.stereo;
+  left_align_ = cfg.left_align;
   if (pa_ >= 0) {
     // External amplifier enable (e.g. NS4168 on the CrowPanel P4, active-low on
     // GPIO30). Start muted; the task raises it only while samples are playing.
@@ -105,7 +118,7 @@ bool I2sSpeaker::begin(const I2sSpeakerConfig& cfg) {
   i2s_chan_config_t chan = I2S_CHANNEL_DEFAULT_CONFIG(I2S_NUM_0, I2S_ROLE_MASTER);
   chan.auto_clear = true;  // silence on underrun instead of repeating the last buffer
   if (i2s_new_channel(&chan, &tx_, nullptr) != ESP_OK) return false;
-  i2s_std_config_t std_cfg = std_config(rate_, I2S_DATA_BIT_WIDTH_16BIT, cfg.bclk, cfg.ws, cfg.dout, -1);
+  i2s_std_config_t std_cfg = std_config(rate_, I2S_DATA_BIT_WIDTH_16BIT, cfg.bclk, cfg.ws, cfg.dout, -1, stereo_, left_align_);
   if (i2s_channel_init_std_mode(tx_, &std_cfg) != ESP_OK) return false;
   uint8_t* storage = static_cast<uint8_t*>(heap_caps_malloc(kSpeakerBuffer + 1, MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT));
   static StaticStreamBuffer_t control;
@@ -194,9 +207,24 @@ void I2sSpeaker::task(void* arg) {
     }
     size_t n = got / sizeof(int16_t);
     int vol = self->volume_.load();
-    for (size_t i = 0; i < n; ++i) chunk[i] = static_cast<int16_t>(chunk[i] * vol / 100);
-    size_t written = 0;
-    i2s_channel_write(self->tx_, chunk, n * sizeof(int16_t), &written, pdMS_TO_TICKS(200));
+    if (self->stereo_) {
+      // The channel is framed stereo, so each mono sample must be written to
+      // both slots (Elecrow's bsp_mic.c does the same before playback). Build an
+      // interleaved L/R buffer half the input length so the write fits.
+      int16_t stereo[kSpeakerChunk];
+      const size_t pairs = std::min(n, static_cast<size_t>(kSpeakerChunk / 2));
+      for (size_t i = 0; i < pairs; ++i) {
+        int16_t s = static_cast<int16_t>(chunk[i] * vol / 100);
+        stereo[2 * i] = s;
+        stereo[2 * i + 1] = s;
+      }
+      size_t written = 0;
+      i2s_channel_write(self->tx_, stereo, pairs * 2 * sizeof(int16_t), &written, pdMS_TO_TICKS(200));
+    } else {
+      for (size_t i = 0; i < n; ++i) chunk[i] = static_cast<int16_t>(chunk[i] * vol / 100);
+      size_t written = 0;
+      i2s_channel_write(self->tx_, chunk, n * sizeof(int16_t), &written, pdMS_TO_TICKS(200));
+    }
   }
 }
 

@@ -449,7 +449,10 @@ BoardConfig make() {
   b.mic = {true, /*sck*/ 24, /*ws*/ -1, /*sd*/ 26, /*pdm*/ true};
   // Speaker amp (NS4168) on I2S1: BCLK GPIO22, WS GPIO21, DATA GPIO23, with an
   // active-low amplifier enable on GPIO30 (AUDIO_GPIO_CTRL in the schematic).
-  b.speaker = {true, /*bclk*/ 22, /*ws*/ 21, /*dout*/ 23, /*pa*/ 30, /*pa_active_low*/ true};
+  // The NS4168 expects Elecrow's stereo, left-justified + bit-shift I2S framing
+  // (see their bsp_audio.c); mono Philips-standard framing produces no sound.
+  b.speaker = {true, /*bclk*/ 22, /*ws*/ 21, /*dout*/ 23, /*pa*/ 30, /*pa_active_low*/ true,
+               /*stereo*/ true, /*left_align*/ true};
   // 1024x600 MIPI-DSI EK79007 panel. The bus carries no GPIO wiring.
   b.lcd.enabled = true;
   b.lcd.width = 1024;

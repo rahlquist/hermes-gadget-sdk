@@ -249,6 +249,8 @@ class I2sSpeaker final : public hg::AudioOut {
   std::atomic<uint8_t> volume_{70};
   int pa_ = -1;               // external amplifier enable GPIO; -1 = none
   bool pa_active_low_ = false;
+  bool stereo_ = false;       // stereo slot framing (CrowPanel P4 NS4168)
+  bool left_align_ = false;   // left-justified + bit_shift framing
 };
 
 // I80 (8-bit parallel) ST7789 panel via esp_lcd. Panels on LCD modules that
