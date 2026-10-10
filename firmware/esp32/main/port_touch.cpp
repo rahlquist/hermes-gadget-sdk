@@ -44,6 +44,8 @@ bool TouchInput::begin(const TouchConfig& touch, const ExpanderKeyConfig& key, c
     cfg.int_gpio_num = GPIO_NUM_NC;
     if (esp_lcd_new_panel_io_i2c(bus, &io_cfg, &io) == ESP_OK &&
         esp_lcd_touch_new_i2c_ft5x06(io, &cfg, &managed_touch_) != ESP_OK) esp_lcd_panel_io_del(io);
+  } else if (touch.enabled && touch.controller == TouchController::Gt911) {
+    begin_gt911(bus);
   } else if (touch.enabled && touch.controller == TouchController::Box3) {
     begin_box_touch(bus);
   } else if (touch.enabled) {
@@ -133,6 +135,83 @@ bool TouchInput::read_touch(TouchSample& out) {
   if (touch_.mirror_x && touch_.width) x = touch_.width - 1 - x;
   if (touch_.mirror_y && touch_.height) y = touch_.height - 1 - y;
   out = {down, static_cast<int16_t>(x), static_cast<int16_t>(y)};
+  return true;
+}
+
+// GT911 (CrowPanel Advanced P4). The controller latches its I2C address from
+// the INT line's level at reset release: INT low -> 0x14, INT high -> 0x5D.
+// On this board INT has no external pull (R75 is a 2K_NC footprint) and RST is
+// pulled up through R74, so neither address can be assumed from the schematic.
+// Pulse RST, then probe both addresses and keep whichever answers.
+bool TouchInput::begin_gt911(i2c_master_bus_handle_t bus) {
+  if (touch_.rst >= 0) {
+    gpio_config_t rst = {};
+    rst.pin_bit_mask = 1ULL << touch_.rst;
+    rst.mode = GPIO_MODE_OUTPUT;
+    rst.pull_up_en = GPIO_PULLUP_ENABLE;  // R74 holds the line high at rest
+    if (gpio_config(&rst) != ESP_OK) {
+      ESP_LOGE(TAG, "GT911 RST GPIO%d could not be configured", touch_.rst);
+      return false;
+    }
+    // RESET_TP is pulled high, so the active level is low.
+    gpio_set_level(static_cast<gpio_num_t>(touch_.rst), 0);
+    vTaskDelay(pdMS_TO_TICKS(10));
+    gpio_set_level(static_cast<gpio_num_t>(touch_.rst), 1);
+    // The GT911 needs ~55 ms after reset before it answers on the bus.
+    vTaskDelay(pdMS_TO_TICKS(60));
+  }
+  if (touch_.int_pin >= 0) {
+    // INT is a floating input afterwards; the touch task polls the controller
+    // over I2C, so the line only needs to not disturb the address latch.
+    gpio_config_t int_line = {};
+    int_line.pin_bit_mask = 1ULL << touch_.int_pin;
+    int_line.mode = GPIO_MODE_INPUT;
+    int_line.pull_up_en = GPIO_PULLUP_DISABLE;
+    int_line.pull_down_en = GPIO_PULLDOWN_DISABLE;
+    gpio_config(&int_line);
+  }
+
+  // The address is latched from INT at reset and cannot be read back, so probe
+  // the bus for it. A quiet probe keeps the log clean: only the address that
+  // actually answers is ever handed to the GT911 driver.
+  const uint8_t at_5d = i2c_master_probe(bus, ESP_LCD_TOUCH_IO_I2C_GT911_ADDRESS, 50) == ESP_OK;
+  const uint8_t at_14 = i2c_master_probe(bus, ESP_LCD_TOUCH_IO_I2C_GT911_ADDRESS_BACKUP, 50) == ESP_OK;
+  if (!at_5d && !at_14) {
+    ESP_LOGE(TAG, "no GT911 answered at 0x5D or 0x14 on the touch I2C bus");
+    return false;
+  }
+  const uint8_t addr = at_14 ? ESP_LCD_TOUCH_IO_I2C_GT911_ADDRESS_BACKUP : ESP_LCD_TOUCH_IO_I2C_GT911_ADDRESS;
+  ESP_LOGI(TAG, "GT911 present at 0x%02x", addr);
+
+  esp_lcd_panel_io_i2c_config_t io_cfg = {};
+  io_cfg.dev_addr = addr;
+  io_cfg.scl_speed_hz = 400000;
+  io_cfg.control_phase_bytes = 1;
+  io_cfg.lcd_cmd_bits = 16;
+  io_cfg.flags.disable_control_phase = 1;
+  esp_lcd_panel_io_handle_t io = nullptr;
+  if (esp_lcd_new_panel_io_i2c(bus, &io_cfg, &io) != ESP_OK) {
+    ESP_LOGE(TAG, "GT911 panel IO at 0x%02x failed to initialise", addr);
+    return false;
+  }
+
+  esp_lcd_touch_config_t cfg = {};
+  cfg.x_max = touch_.width;
+  cfg.y_max = touch_.height;
+  // Both reset and interrupt were handled above; the component would otherwise
+  // drive INT itself, and with INT floating it cannot select an address.
+  cfg.rst_gpio_num = GPIO_NUM_NC;
+  cfg.int_gpio_num = GPIO_NUM_NC;
+  cfg.flags.swap_xy = touch_.swap_xy;
+  cfg.flags.mirror_x = touch_.mirror_x;
+  cfg.flags.mirror_y = touch_.mirror_y;
+
+  if (esp_lcd_touch_new_i2c_gt911(io, &cfg, &managed_touch_) != ESP_OK) {
+    ESP_LOGE(TAG, "GT911 at 0x%02x answered the probe but failed to initialise", addr);
+    esp_lcd_panel_io_del(io);
+    return false;
+  }
+  ESP_LOGI(TAG, "GT911 ready at 0x%02x, %ux%u", addr, touch_.width, touch_.height);
   return true;
 }
 

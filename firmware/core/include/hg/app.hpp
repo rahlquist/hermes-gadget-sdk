@@ -234,7 +234,7 @@ class App {
   std::string server_url_;
   std::string access_token_;
   TalkMode talk_mode_ = TalkMode::Hold;
-  uint8_t volume_ = 70;
+  uint8_t volume_ = 35;
   uint8_t brightness_ = 100;
   enum class Menu : uint8_t { Closed, Volume, Brightness, TalkMode, Microphone, Speaker, Display, Inputs, Info,
                               Power, IdleTimer, PowerOff, WifiSetup, Back };

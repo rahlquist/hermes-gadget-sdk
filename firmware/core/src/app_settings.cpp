@@ -95,14 +95,19 @@ void App::settings_input(Button button, bool pressed) {
       break;
     case Menu::Speaker:
       if (hal_.speaker && hal_.speaker->begin(profile_.speaker_rate)) {
-        // A quiet quarter-second square tone, entirely local to the device.
-        std::vector<int16_t> tone(profile_.speaker_rate / 4);
+        // A 1 s, 1 kHz square wave at ~37% amplitude — the stream buffer is
+        // ~1.5 s and write() drops overflow, so this must fit in one write.
+        // (The old quarter-second blip at ~3% was effectively inaudible.)
+        // Non-blocking: hardware_check_ + the busy() poll in tick() report
+        // completion, so the app task is never stalled.
+        const size_t tone_samples = profile_.speaker_rate;  // 1 s
         const uint32_t half_period = std::max<uint32_t>(1, profile_.speaker_rate / 1000);
-        for (size_t i = 0; i < tone.size(); ++i) tone[i] = (i / half_period) % 2 ? 900 : -900;
+        std::vector<int16_t> tone(tone_samples);
+        for (size_t i = 0; i < tone_samples; ++i) tone[i] = (i / half_period) % 2 ? 12000 : -12000;
         hal_.speaker->write(tone.data(), tone.size());
         hal_.speaker->end();
         hardware_check_ = HardwareCheck::Speaker;
-        check_result_ = "Listen for a short tone";
+        check_result_ = "Playing test tone...";
       } else check_result_ = "Speaker unavailable";
       break;
     case Menu::Display:
@@ -181,7 +186,8 @@ void App::settings_model() {
       break;
     case Menu::Speaker:
       m.detail = "Speaker check";
-      m.body = "Start to play a short tone at the current volume.";
+      m.body = hardware_check_ == HardwareCheck::Speaker && !check_result_.empty() ? check_result_
+               : "Start to play a test tone at the current volume.";
       break;
     case Menu::Display:
       m.detail = "Display check";
