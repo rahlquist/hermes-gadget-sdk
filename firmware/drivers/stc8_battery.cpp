@@ -30,8 +30,10 @@ std::optional<PowerStatus> Stc8Battery::read() {
   if (battery_mv <= kMaxReportedVoltageMv) status.battery_mv = static_cast<uint16_t>(battery_mv);
   if (raw[8] <= 100) status.battery_percent = raw[8];
   if (raw[9] <= static_cast<uint8_t>(BatteryChargeState::Error)) {
-    status.battery_state = static_cast<BatteryChargeState>(raw[9]);
-    status.charging = raw[9] == static_cast<uint8_t>(BatteryChargeState::Charging);
+    const auto state = static_cast<BatteryChargeState>(raw[9]);
+    status.battery_state = state;
+    if (state != BatteryChargeState::Error)
+      status.charging = state == BatteryChargeState::Charging;
   }
   if (raw[10] <= static_cast<uint8_t>(BatteryLedState::LowPower))
     status.battery_led_state = static_cast<BatteryLedState>(raw[10]);

@@ -21,10 +21,20 @@ Firmware builds and simulator tests check software behavior. A physical verifica
 | M5Stack CoreS3 (K128) | ILI9342C/E 320×240, detected through touch firmware; FT6336 gestures | ES7210 microphones and AW88298 speaker | AXP2101 readings, backlight and local power-off; AW9523 reset/boost control | Experimental; physical report not recorded for either panel revision |
 | LilyGO T-Display-S3 (SKU/Version H587; PCB revision 1.2) | ST7789 320×170 over 8-bit i80; BOOT and Button2 | No onboard audio | Battery divider; no fuel gauge; GPIO15 powers the panel rail, not device shutdown | Experimental; physical smoke check only (screen ready/replies, Wi-Fi, online pairing); full physical checklist not completed; hardware-verified status not claimed |
 | Elecrow CrowPanel 2.1-inch HMI (ESP32-S3R8, 16 MB flash) | ST7701 480×480 RGB round panel; CST-family touch, rotary encoder, encoder button on PCF8574 | No onboard audio | USB power; screen timeout | Experimental; physical smoke check only (panel bring-up, brightness scale, Wi-Fi, online pairing, serial console); touch coordinates and encoder direction not physically verified |
+| Elecrow CrowPanel Advanced 10.1-inch ESP32-P4 V1.1 | 1280×800 DSI; touch | Direct-I²S speaker; PDM microphone | STC8-reported battery telemetry; battery-only Wi-Fi startup powerdown/reboot reported | Partial physical report; cause unconfirmed; see [power report](#crowpanel-advanced-p4-power-report) |
 
 The LCD-1.54 `-EN` SKU uses the same hardware. The separate Touch-LCD-1.54 model adds a CST816 touchscreen that this port does not drive. AMOLED-1.75C has its own firmware profile; its reset and audio clock pins differ from the 1.75 model. See [hardware and wiring](hardware.md) for connections and exact model names.
 
 CI builds and packages these profiles. The browser installer lists profiles included in the latest published release, so newly merged profiles may require a source build until the next release. Other chips, wiring, and unlisted hardware revisions are porting targets, not verified configurations.
+
+## CrowPanel Advanced P4 power report
+
+- **Board:** Elecrow CrowPanel Advanced 10.1-inch ESP32-P4 V1.1. The tested unit lacks schematic-listed IC5/IC6.
+- **Firmware:** `6165f45-i2s-timeout-ms`.
+- **Observed power behavior:** With USB disconnected, the screen powered down when Wi-Fi started at 100% brightness. In a 50%-brightness test, the device rebooted as Wi-Fi connected; the user measured about 4.11 V at the battery terminals before connection and 4.08 V during connection. J13 pin 3 to pin 4 measured 3.29 V through boot and 3.28 V at Wi-Fi connection.
+- **Cause:** Not established. These meter readings show no large sustained drop at the measured points, but may miss a brief transient. No reset cause was captured for the battery-only event.
+- **Telemetry caveat:** With USB attached, the display showed 4,218 mV / 100% while a meter at the battery terminals read 4.114 V. After unplugging USB, the display showed 3,779 mV / 39%, but there was no simultaneous battery-terminal measurement. STC8 voltage and percentage remain uncalibrated.
+- **Candidate mitigation (not tested):** Evaluate a 1 F super capacitor as a possible buffer for Wi-Fi startup load. This is a suggestion, not a validated fix. Required capacitance, placement, voltage rating, ESR, inrush current, and charger/regulator compatibility need engineering review before installation.
 
 ## Waveshare 1.85C V2 partial physical report
 

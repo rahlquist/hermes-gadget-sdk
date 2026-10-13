@@ -43,6 +43,17 @@ TEST("STC8 battery: charging state maps to the generic charging flag") {
   CHECK(status->battery_led_state == hg::BatteryLedState::Charging);
 }
 
+TEST("STC8 battery: error state is preserved without claiming not charging") {
+  const std::array<uint8_t, 12> raw = {0xeb, 0x0b, 0, 0, 0x90, 0x10, 0, 0, 100, 4, 4, 0};
+  hg::Stc8Battery power([&](uint8_t reg, uint8_t& value) { value = raw[reg]; return true; });
+
+  const auto status = power.read();
+
+  CHECK(status.has_value());
+  CHECK(status->battery_state == hg::BatteryChargeState::Error);
+  CHECK(!status->charging.has_value());
+}
+
 TEST("STC8 battery: a register read failure discards the sample and stops the sequence") {
   std::vector<uint8_t> registers;
   hg::Stc8Battery power([&](uint8_t reg, uint8_t& value) {
