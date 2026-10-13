@@ -26,6 +26,7 @@ idf_component_register(
         "port_power.cpp"
         "port_latch_power.cpp"
         "../../drivers/axp2101.cpp"
+        "../../drivers/stc8_battery.cpp"
         "../../drivers/cores3.cpp"
         "port_storage.cpp"
         "port_system.cpp"
@@ -46,6 +47,7 @@ idf_component_register(
         esp_app_format
         esp_adc
         esp_event
+        esp_hw_support
         esp_lcd
         esp_lcd_st7701
         esp_lcd_panel_io_additions

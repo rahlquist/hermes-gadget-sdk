@@ -23,7 +23,8 @@ struct FakeHal : hg::Display, hg::AudioIn, hg::AudioOut, hg::Transport, hg::Stor
   void random_bytes(uint8_t* out, size_t len) override {
     for (size_t i = 0; i < len; ++i) out[i] = static_cast<uint8_t>(i);
   }
-  void log(hg::LogLevel, std::string_view) override {}
+  std::vector<std::string> logs;
+  void log(hg::LogLevel, std::string_view message) override { logs.emplace_back(message); }
 
   // Transport
   std::string url;
@@ -85,14 +86,20 @@ struct FakeHal : hg::Display, hg::AudioIn, hg::AudioOut, hg::Transport, hg::Stor
 
   // Mic
   bool mic_on = false;
+  float mic_loopback_gain = 1.0f;
   bool start(uint32_t) override { return mic_on = true; }
   void stop() override { mic_on = false; }
+  float loopback_gain() const override { return mic_loopback_gain; }
 
   // Speaker
   bool spk_open = false;
   size_t spk_samples = 0;
+  int16_t first_spk_sample = 0;
   bool begin(uint32_t) override { return spk_open = true; }
-  void write(const int16_t*, size_t n) override { spk_samples += n; }
+  void write(const int16_t* samples, size_t n) override {
+    if (spk_samples == 0 && n > 0) first_spk_sample = samples[0];
+    spk_samples += n;
+  }
   void end() override { spk_open = false; }
   void abort() override { spk_open = false; }
   bool busy() const override { return spk_open; }
@@ -335,6 +342,33 @@ TEST("app: reply audio plays through the speaker and barge-in stops it") {
   CHECK(r.app.screen() == hg::Screen::Listening);
 }
 
+TEST("app: inbound PCM diagnostics record format and levels without audio payload") {
+  Rig r;
+  r.bring_online(true);
+  r.server(R"({"type":"audio.start","stream":3,"rate":16000,"format":"pcm16"})");
+  std::vector<uint8_t> frame(hg::proto::kBinaryHeader + 4, 0);
+  hg::proto::write_binary_header(frame.data(), hg::proto::Channel::Audio, 3, 0);
+  const size_t payload = hg::proto::kBinaryHeader;
+  frame[payload] = 0xe8;
+  frame[payload + 1] = 0x03;
+  frame[payload + 2] = 0x18;
+  frame[payload + 3] = 0xfc;
+  r.app.on_transport_binary(frame.data(), frame.size());
+  r.server(R"({"type":"audio.end","stream":3})");
+  CHECK_EQ(r.fake.spk_samples, size_t(2));
+  bool start = false, end = false;
+  for (const std::string& line : r.fake.logs) {
+    start = start || line.find("[GADGET-AUDIO-01] start") != std::string::npos;
+    end = end || (line.find("[GADGET-AUDIO-01] end") != std::string::npos &&
+                  line.find("rate=16000") != std::string::npos &&
+                  line.find("frames=1") != std::string::npos &&
+                  line.find("samples=2") != std::string::npos &&
+                  line.find("peak=1000") != std::string::npos &&
+                  line.find("gaps=0") != std::string::npos);
+  }
+  CHECK(start);
+  CHECK(end);
+}
 TEST("app: agent actions run on the device and report results") {
   Rig r;
   int calls = 0;
@@ -1022,7 +1056,7 @@ TEST("settings: hardware checks are local and prompts release the microphone") {
   r.app.console("talk");
   r.app.console("release");
   r.advance(20);
-  CHECK_EQ(r.fake.spk_samples, size_t(4000));
+  CHECK_EQ(r.fake.spk_samples, size_t(16000));
   CHECK(r.app.model().body.find("Tone finished") != std::string::npos);
   r.app.console("cancel");
   r.app.console("talk");
@@ -1040,6 +1074,33 @@ TEST("settings: hardware checks are local and prompts release the microphone") {
   CHECK(!r.fake.mic_on);
   CHECK(r.app.screen() == hg::Screen::Prompt);
   CHECK(!r.app.open_settings());
+}
+
+TEST("settings: microphone check records three seconds and plays the loudest second locally") {
+  Rig r;
+  r.bring_online(true);
+  CHECK(r.app.open_settings());
+  for (int i = 0; i < 3; ++i) r.app.console("cancel");
+  CHECK_EQ(r.app.model().detail, std::string("Microphone check"));
+  r.fake.mic_loopback_gain = 10.0f;
+  r.app.console("talk");
+  r.app.console("release");
+  CHECK(r.fake.mic_on);
+  const int initial_flushes = r.fake.flushes;
+  std::vector<int16_t> chunk(320, 1000);
+  for (int i = 0; i < 150; ++i) {
+    chunk.assign(320, i < 50 ? 1000 : 3000);
+    r.app.on_mic_samples(chunk.data(), chunk.size());
+    if (i == 49) CHECK(r.fake.mic_on);
+    r.advance(20);
+  }
+  CHECK(!r.fake.mic_on);
+  CHECK_EQ(r.fake.spk_samples, size_t(16000));
+  CHECK_EQ(r.fake.first_spk_sample, int16_t(12000));
+  CHECK(r.fake.sent_binary.empty());
+  CHECK(r.fake.flushes - initial_flushes < 75);
+  r.advance(20);
+  CHECK(r.app.model().body.find("Playback finished") != std::string::npos);
 }
 
 TEST("settings: title hold and menu swipe work without starting a recording") {
@@ -1215,6 +1276,52 @@ TEST("power: idle screen dims, sleeps and consumes the wake input without record
   CHECK(r.app.screen() == hg::Screen::Prompt);
   r.advance(30000);
   CHECK_EQ(r.fake.brightness, 100);
+}
+
+TEST("power status API exposes STC8 voltage, charge state and indicator state") {
+  struct Battery : hg::Power {
+    int reads = 0;
+    std::optional<hg::PowerStatus> read() override {
+      ++reads;
+      hg::PowerStatus status;
+      status.battery_mv = 4240;
+      status.battery_adc_mv = 3051;
+      status.battery_percent = 100;
+      status.charging = false;
+      status.battery_state = hg::BatteryChargeState::FullyCharged;
+      status.battery_led_state = hg::BatteryLedState::FullyCharged;
+      return status;
+    }
+    bool power_off() override { return false; }
+  } battery;
+  Rig r;
+  r.hal.power = &battery;
+  r.bring_online(true);
+  CHECK_EQ(battery.reads, 1);
+  r.advance(4000);
+  CHECK_EQ(battery.reads, 1);
+  r.advance(10);
+  CHECK_EQ(battery.reads, 2);
+
+  Value status;
+  CHECK(hg::json::parse(r.app.status_json(), status));
+  CHECK_EQ(status["power"]["battery_mv"].as_int(), int64_t(4240));
+  CHECK_EQ(status["power"]["battery_adc_mv"].as_int(), int64_t(3051));
+  CHECK_EQ(status["power"]["battery_percent"].as_int(), int64_t(100));
+  CHECK(status["power"]["charging"].as_bool() == false);
+  CHECK_EQ(status["power"]["battery_state"].as_string(), std::string("fully_charged"));
+  CHECK_EQ(status["power"]["battery_led_state"].as_string(), std::string("fully_charged"));
+  CHECK(status["power"]["battery_present"].is_null());
+  CHECK(status["power"]["external_power"].is_null());
+
+  r.advance(4990);
+  CHECK_EQ(battery.reads, 2);
+  r.advance(10);
+  CHECK_EQ(battery.reads, 3);
+  const Value* sensors = &(*r.fake.last("state"))["sensors"];
+  CHECK_EQ((*sensors)["battery_adc_mv"].as_int(), int64_t(3051));
+  CHECK_EQ((*sensors)["battery_state"].as_string(), std::string("fully_charged"));
+  CHECK_EQ((*sensors)["battery_led_state"].as_string(), std::string("fully_charged"));
 }
 
 TEST("power: failed readings replace stale data and shutdown requires a second local selection") {

@@ -3,6 +3,11 @@
 #include <algorithm>
 
 namespace hg {
+namespace {
+
+constexpr uint32_t kPowerPollIntervalMs = 5000;
+
+}  // namespace
 
 bool App::wake_display() {
   activity_at_ = now();
@@ -17,7 +22,7 @@ bool App::wake_display() {
 }
 
 void App::power_tick() {
-  if (hal_.power && (!power_read_at_ || now() - power_read_at_ >= 5000)) {
+  if (hal_.power && (!power_read_at_ || now() - power_read_at_ >= kPowerPollIntervalMs)) {
     power_status_ = hal_.power->read();
     power_read_at_ = now();
     sensors_dirty_ = true;
@@ -48,6 +53,9 @@ json::Value App::power_value() const {
   if (p.battery_percent) value.set("battery_percent", *p.battery_percent);
   if (p.charging) value.set("charging", *p.charging);
   if (p.external_power) value.set("external_power", *p.external_power);
+  if (p.battery_adc_mv) value.set("battery_adc_mv", *p.battery_adc_mv);
+  if (p.battery_state) value.set("battery_state", battery_charge_state_name(*p.battery_state));
+  if (p.battery_led_state) value.set("battery_led_state", battery_led_state_name(*p.battery_led_state));
   return value;
 }
 

@@ -17,6 +17,7 @@
 
 #include "board.hpp"
 #include "axp2101.hpp"
+#include "stc8_battery.hpp"
 #include "band_flush.hpp"
 #include "cores3.hpp"
 #include "speaker_pa.hpp"
@@ -218,6 +219,7 @@ class PdmMic final : public hg::AudioIn {
   bool begin(const I2sMicConfig& cfg);
   bool start(uint32_t sample_rate) override;
   void stop() override;
+  float loopback_gain() const override { return 10.0f; }
 
  private:
   static void task(void* arg);
@@ -246,6 +248,7 @@ class I2sSpeaker final : public hg::AudioOut {
   std::atomic<bool> open_{false};
   std::atomic<bool> draining_{false};
   std::atomic<bool> flush_{false};
+  std::atomic<bool> flush_done_{true};
   std::atomic<uint8_t> volume_{70};
   int pa_ = -1;               // external amplifier enable GPIO; -1 = none
   bool pa_active_low_ = false;
@@ -381,6 +384,21 @@ class TouchInput {
   gpio_num_t encoder_b_ = GPIO_NUM_NC;
   uint8_t encoder_state_ = 0;
   int8_t encoder_accumulator_ = 0;
+};
+
+class Stc8Power final : public hg::Power {
+ public:
+  Stc8Power();
+  bool begin(i2c_master_bus_handle_t bus);
+  std::optional<hg::PowerStatus> read() override;
+  bool can_power_off() const override { return false; }
+  bool power_off() override { return false; }
+
+ private:
+  i2c_master_dev_handle_t dev_ = nullptr;
+  hg::Stc8Battery chip_;
+  bool read_result_seen_ = false;
+  bool last_read_ok_ = false;
 };
 
 class AxpPower final : public hg::Power {

@@ -6,6 +6,7 @@
 
 #include "driver/gpio.h"
 #include "esp_app_desc.h"
+#include "esp_ldo_regulator.h"
 #include "esp_log.h"
 #include "esp_psram.h"
 #include "hg/touch.hpp"
@@ -15,6 +16,7 @@
 namespace {
 
 const char* TAG = "hg.main";
+esp_ldo_channel_handle_t g_touch_io_ldo = nullptr;
 
 hgp::EspSystem g_system;
 hgp::NvsStorage g_storage;
@@ -35,6 +37,7 @@ hgp::TouchInput g_touch;
 hgp::Wifi g_wifi;
 hgp::EspUpdater g_updater;
 hgp::AxpPower g_power;
+hgp::Stc8Power g_stc8_power;
 hgp::LatchPower g_latch_power;
 hgp::CoreS3Board g_cores3;
 hg::TouchGestures* g_gestures = nullptr;
@@ -150,6 +153,8 @@ void dispatch(hg::App& app, hgp::Event& ev) {
   }
 }
 
+
+
 }  // namespace
 
 extern "C" void app_main(void) {
@@ -184,7 +189,23 @@ extern "C" void app_main(void) {
   hal.storage = &g_storage;
   if (latch_power) hal.power = &g_latch_power;
   if (g_updater.capacity()) hal.updater = &g_updater;
+  // On CrowPanel P4 V1.1, LDO4 supplies the VDD_IO_5 GPIO bank (GPIO39-48),
+  // including the GPIO45/46 I2C pins and the 3.3 V side of their level shifter.
+  // Acquire it before bus/touch/display setup so the bank is at 3.3 V.
+  if (board.name && std::strcmp(board.name, "crowpanel-advance-p4-10.1") == 0) {
+    esp_ldo_channel_config_t io_ldo = {};
+    io_ldo.chan_id = 4;
+    io_ldo.voltage_mv = 3300;
+    const esp_err_t io_ldo_err = esp_ldo_acquire_channel(&io_ldo, &g_touch_io_ldo);
+    ESP_LOGI(TAG, "CrowPanel VDD_IO_5 LDO4 3300mV: %s", esp_err_to_name(io_ldo_err));
+    if (io_ldo_err != ESP_OK) ESP_LOGE(TAG, "LDO4 unavailable; GPIO39-48 rail not configured by firmware");
+  }
   i2c_master_bus_handle_t i2c_bus = hgp::i2c::bus(board.i2c);
+  if (board.stc8_battery) {
+    const bool stc8_ready = g_stc8_power.begin(i2c_bus);
+    if (!stc8_ready) ESP_LOGE(TAG, "STC8 battery adapter registration failed; readings will be unavailable");
+    hal.power = &g_stc8_power;
+  }
   const bool peripherals_ready = (!board.cores3 || g_cores3.begin(i2c_bus)) &&
       (!board.expander_reset.mask || hgp::tca9554_reset(i2c_bus, board.expander_reset));
   if (board.cores3 && peripherals_ready)

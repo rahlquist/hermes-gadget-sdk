@@ -34,16 +34,7 @@ int run(int argc, char** argv) {
 }  // namespace
 
 void begin() {
-  static const char* const kCommands[] = {"help",      "status", "diag",   "get",         "set",       "say",
-                                          "talk",      "release", "cancel", "new-session", "reconnect", "forget-key",
-                                          "factory-reset", "settings", "wifi-setup"};
-  for (const char* name : kCommands) {
-    esp_console_cmd_t cmd = {};
-    cmd.command = name;
-    cmd.help = "Hermes Gadget command (see: help)";
-    cmd.func = &run;
-    esp_console_cmd_register(&cmd);
-  }
+  // The IDF new_repl helper initializes esp_console and registers built-in help.
   esp_console_repl_t* repl = nullptr;
   esp_console_repl_config_t repl_cfg = ESP_CONSOLE_REPL_CONFIG_DEFAULT();
   repl_cfg.prompt = "gadget>";
@@ -58,6 +49,15 @@ void begin() {
   esp_console_dev_uart_config_t dev = ESP_CONSOLE_DEV_UART_CONFIG_DEFAULT();
   ESP_ERROR_CHECK(esp_console_new_repl_uart(&dev, &repl_cfg, &repl));
 #endif
+  static const char* const kCommands[] = {"status", "diag", "get", "set", "say", "talk", "release", "cancel",
+                                          "new-session", "reconnect", "forget-key", "factory-reset", "settings", "wifi-setup"};
+  for (const char* name : kCommands) {
+    esp_console_cmd_t cmd = {};
+    cmd.command = name;
+    cmd.help = "Hermes Gadget command (see: help)";
+    cmd.func = &run;
+    ESP_ERROR_CHECK(esp_console_cmd_register(&cmd));
+  }
   ESP_ERROR_CHECK(esp_console_start_repl(repl));
   ESP_LOGI(TAG, "console ready (type: help)");
 }

@@ -78,6 +78,7 @@ struct I2sSpeakerConfig {
   bool pa_active_low = false;  // amp enable is active-low (driven low to enable)
   bool stereo = false;       // I2S_SLOT_MODE_STEREO with both slots (CrowPanel P4 NS4168)
   bool left_align = false;   // left-justified + bit_shift framing (paired with stereo)
+  int i2s_port = 0;            // ESP-IDF I2S controller; default preserves existing boards
 };
 
 // Which vendor bring-up table a CO5300 panel needs. The round 466x466 1.75"
@@ -197,6 +198,7 @@ struct BoardConfig {
   ExpanderKeyConfig pwr_key;
   ExpanderResetConfig expander_reset;
   bool axp2101 = false;
+  bool stc8_battery = false;
   bool axp_audio_supply = false;
   bool cores3 = false;
   LatchPowerConfig latch_power;

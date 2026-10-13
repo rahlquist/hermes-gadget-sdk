@@ -453,6 +453,7 @@ BoardConfig make() {
   // (see their bsp_audio.c); mono Philips-standard framing produces no sound.
   b.speaker = {true, /*bclk*/ 22, /*ws*/ 21, /*dout*/ 23, /*pa*/ 30, /*pa_active_low*/ true,
                /*stereo*/ true, /*left_align*/ true};
+  b.speaker.i2s_port = 1;  // V1.1 routes the PDM microphone to I2S0 and NS4168 speaker to I2S1.
   // 1024x600 MIPI-DSI EK79007 panel. The bus carries no GPIO wiring.
   b.lcd.enabled = true;
   b.lcd.width = 1024;
@@ -473,6 +474,7 @@ BoardConfig make() {
   b.lcd.dsi.use_dma2d = true;
   // GT911 touch on I2C0.
   b.i2c = {45, 46, 400000};
+  b.stc8_battery = true;  // V1.1 STC8 on the shared I2C0 bus reports battery and charger state.
   b.touch.enabled = true;
   b.touch.controller = TouchController::Gt911;
   b.touch.width = 1024;

@@ -1,6 +1,7 @@
 #include "hg/app.hpp"
 
 #include <algorithm>
+#include <cmath>
 #include <vector>
 
 namespace hg {
@@ -27,10 +28,83 @@ bool App::open_settings() {
 }
 
 void App::stop_hardware_check() {
-  if (hardware_check_ == HardwareCheck::Microphone && hal_.mic) hal_.mic->stop();
-  if (hardware_check_ == HardwareCheck::Speaker && hal_.speaker) hal_.speaker->abort();
+  if ((hardware_check_ == HardwareCheck::Microphone || hardware_check_ == HardwareCheck::MicrophonePlayback) && hal_.mic)
+    hal_.mic->stop();
+  if ((hardware_check_ == HardwareCheck::Speaker || hardware_check_ == HardwareCheck::MicrophonePlayback) && hal_.speaker)
+    hal_.speaker->abort();
   hardware_check_ = HardwareCheck::None;
+  mic_loopback_buf_.clear();
+  mic_meter_energy_ = 0.0;
+  mic_meter_samples_ = 0;
+  mic_meter_update_at_ = 0;
+  mic_meter_smoothed_ = false;
   level_ = 0;
+}
+
+void App::play_mic_loopback() {
+  if (hal_.mic) hal_.mic->stop();
+  if (mic_loopback_buf_.empty()) {
+    hardware_check_ = HardwareCheck::None;
+    check_result_ = "No mic signal was captured.";
+    update_model();
+    return;
+  }
+  const size_t capture_rate = profile_.mic_rate ? profile_.mic_rate : 16000;
+  const size_t playback_samples = std::min(capture_rate, mic_loopback_buf_.size());
+  const size_t hop = std::max<size_t>(1, capture_rate / 10);
+  size_t best_start = 0;
+  float best_rms = 0.0f;
+  for (size_t start = 0; start + playback_samples <= mic_loopback_buf_.size(); start += hop) {
+    const float candidate = rms(mic_loopback_buf_.data() + start, playback_samples);
+    if (candidate > best_rms) {
+      best_rms = candidate;
+      best_start = start;
+    }
+  }
+  const size_t last_start = mic_loopback_buf_.size() - playback_samples;
+  if (best_start != last_start) {
+    const float candidate = rms(mic_loopback_buf_.data() + last_start, playback_samples);
+    if (candidate > best_rms) {
+      best_rms = candidate;
+      best_start = last_start;
+    }
+  }
+  if (best_rms < 1.0f) {
+    hardware_check_ = HardwareCheck::None;
+    mic_loopback_buf_.clear();
+    check_result_ = "No mic signal was captured.";
+    update_model();
+    return;
+  }
+  const float port_gain = hal_.mic ? hal_.mic->loopback_gain() : 1.0f;
+  const float gain = std::min(40.0f, std::max(port_gain, 8000.0f / best_rms));
+  uint32_t output_peak = 0;
+  for (size_t i = 0; i < playback_samples; ++i) {
+    const int32_t amplified = static_cast<int32_t>(mic_loopback_buf_[best_start + i] * gain);
+    const int32_t limited = std::max<int32_t>(-12000, std::min<int32_t>(12000, amplified));
+    mic_loopback_buf_[i] = static_cast<int16_t>(limited);
+    output_peak = std::max(output_peak, static_cast<uint32_t>(limited < 0 ? -limited : limited));
+  }
+  const size_t captured_samples = mic_loopback_buf_.size();
+  mic_loopback_buf_.resize(playback_samples);
+  const size_t best_start_ms = best_start * 1000 / capture_rate;
+  log(LogLevel::Info, "local mic loopback: captured=" + std::to_string(captured_samples) +
+                      " playback_start_ms=" + std::to_string(best_start_ms) +
+                      " input_rms=" + std::to_string(static_cast<unsigned>(best_rms)) +
+                      " gain=" + std::to_string(gain) + " output_peak=" + std::to_string(output_peak));
+  if (!hal_.speaker || !hal_.speaker->begin(profile_.speaker_rate)) {
+    hardware_check_ = HardwareCheck::None;
+    mic_loopback_buf_.clear();
+    check_result_ = "Recording finished; speaker playback is unavailable.";
+    log(LogLevel::Warn, "local mic loopback: speaker begin failed");
+    update_model();
+    return;
+  }
+  hal_.speaker->write(mic_loopback_buf_.data(), mic_loopback_buf_.size());
+  hal_.speaker->end();
+  hardware_check_ = HardwareCheck::MicrophonePlayback;
+  check_result_ = "Playing the loudest second of the recording...";
+  update_model();
 }
 
 void App::close_settings() {
@@ -90,8 +164,18 @@ void App::settings_input(Button button, bool pressed) {
       if (hal_.mic) console(talk_mode_ == TalkMode::Hold ? "set talk_mode tap" : "set talk_mode hold");
       break;
     case Menu::Microphone:
-      if (hal_.mic && hal_.mic->start(profile_.mic_rate)) hardware_check_ = HardwareCheck::Microphone;
-      else check_result_ = "Microphone unavailable";
+      if (hal_.mic && hal_.mic->start(profile_.mic_rate)) {
+        mic_loopback_buf_.clear();
+        mic_loopback_buf_.reserve(static_cast<size_t>(profile_.mic_rate ? profile_.mic_rate : 16000) * 3);
+        mic_meter_energy_ = 0.0;
+        mic_meter_samples_ = 0;
+        mic_meter_update_at_ = 0;
+        mic_meter_smoothed_ = false;
+        level_ = 0;
+        hardware_check_ = HardwareCheck::Microphone;
+        check_result_ = "Recording three seconds locally; the loudest second will play back.";
+        update_model();
+      } else check_result_ = "Microphone unavailable";
       break;
     case Menu::Speaker:
       if (hal_.speaker && hal_.speaker->begin(profile_.speaker_rate)) {
@@ -149,7 +233,12 @@ void App::settings_tick() {
       cancel_long_fired_ = true;
     }
   }
-  if (hardware_check_ == HardwareCheck::Speaker && !hal_.speaker->busy()) {
+  if (hardware_check_ == HardwareCheck::MicrophonePlayback && hal_.speaker && !hal_.speaker->busy()) {
+    hardware_check_ = HardwareCheck::None;
+    mic_loopback_buf_.clear();
+    check_result_ = "Playback finished. Did you hear the recording?";
+    update_model();
+  } else if (hardware_check_ == HardwareCheck::Speaker && !hal_.speaker->busy()) {
     hardware_check_ = HardwareCheck::None;
     check_result_ = "Tone finished. Did you hear it?";
     update_model();
@@ -181,8 +270,12 @@ void App::settings_model() {
       break;
     case Menu::Microphone:
       m.detail = "Microphone check";
-      m.body = hardware_check_ == HardwareCheck::Microphone ? "Speak now. Level: " + std::to_string(level_) + "%\nLocal only. Nothing is sent."
-                                                          : "Start to check the microphone level. No recording is saved or sent.";
+      if (hardware_check_ == HardwareCheck::Microphone)
+        m.body = "Speak now. Level: " + std::to_string(level_) + "%\nThree-second recording. Local only. Nothing is sent.";
+      else if (hardware_check_ == HardwareCheck::MicrophonePlayback)
+        m.body = check_result_;
+      else
+        m.body = check_result_.empty() ? "Record three seconds locally; the loudest second plays back." : check_result_;
       break;
     case Menu::Speaker:
       m.detail = "Speaker check";

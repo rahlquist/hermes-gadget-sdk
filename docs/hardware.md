@@ -476,6 +476,7 @@ gadget> set server ws://192.168.1.20:8765/gadget
 gadget> status
 @status {"device_id":"hg-...","phase":"online","screen":"pairing","pairing_code":"ABCD2345",...}
 ```
+When the board has a power adapter, `status` includes a `power` object; the state sensor message mirrors its battery fields. On the CrowPanel P4, the STC8 adapter samples its 12-byte record every 5 seconds through the app power poller. Fields include `battery_mv`, `battery_adc_mv`, `battery_percent`, `battery_state`, `battery_led_state`, and `charging`. State strings are `idle`, `charging`, `fully_charged`, `no_charge`, or `error`; LED strings also include `low_power`. `battery_present` and `external_power` remain unknown for this adapter and are not inferred.
 
 | Command | Meaning |
 |---|---|
