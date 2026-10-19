@@ -7,6 +7,7 @@
 #pragma once
 
 #include <cstddef>
+#include <array>
 #include <cstdint>
 #include <optional>
 #include <string>
@@ -153,6 +154,8 @@ struct PowerStatus {
   std::optional<uint16_t> battery_adc_mv;
   std::optional<BatteryChargeState> battery_state;
   std::optional<BatteryLedState> battery_led_state;
+  // Raw STC8 battery bytes for local settings diagnostics; not network telemetry.
+  std::optional<std::array<uint8_t, 12>> battery_registers;
 };
 
 class Power {

@@ -4,6 +4,18 @@
 #include <cmath>
 #include <vector>
 
+namespace {
+
+std::string stc8_hex_byte(std::uint8_t value) {
+  constexpr char kHex[] = "0123456789ABCDEF";
+  std::string result = "0x00";
+  result[2] = kHex[value >> 4];
+  result[3] = kHex[value & 0x0f];
+  return result;
+}
+
+}  // namespace
+
 namespace hg {
 
 bool App::settings_hold_live() const { return !prompt_showing() && !ota_busy() && !wifi_setup_open(); }
@@ -306,6 +318,28 @@ void App::settings_model() {
         if (p.battery_mv) m.body += std::to_string(*p.battery_mv) + " mV\n";
         if (p.charging) m.body += *p.charging ? "Charging\n" : "Not charging\n";
         if (p.external_power) m.body += *p.external_power ? "USB power\n" : "No USB power\n";
+        if (p.battery_adc_mv) m.body += "ADC sense " + std::to_string(*p.battery_adc_mv) + " mV\n";
+        if (p.battery_state) m.body += std::string("Charge state: ") + battery_charge_state_name(*p.battery_state) + "\n";
+        if (p.battery_led_state) m.body += std::string("LED state: ") + battery_led_state_name(*p.battery_led_state) + "\n";
+        if (p.battery_registers) {
+          const auto& raw = *p.battery_registers;
+          m.body += "STC8 raw registers (local only):\n";
+          m.body += "0x00 adc_voltage[0] = " + stc8_hex_byte(raw[0]) + "\n";
+          m.body += "0x01 adc_voltage[1] = " + stc8_hex_byte(raw[1]) + "\n";
+          m.body += "0x02 adc_voltage[2] = " + stc8_hex_byte(raw[2]) + "\n";
+          m.body += "0x03 adc_voltage[3] = " + stc8_hex_byte(raw[3]) + "\n";
+          m.body += "0x04 bat_voltage[0] = " + stc8_hex_byte(raw[4]) + "\n";
+          m.body += "0x05 bat_voltage[1] = " + stc8_hex_byte(raw[5]) + "\n";
+          m.body += "0x06 bat_voltage[2] = " + stc8_hex_byte(raw[6]) + "\n";
+          m.body += "0x07 bat_voltage[3] = " + stc8_hex_byte(raw[7]) + "\n";
+          m.body += "0x08 percentage = " + stc8_hex_byte(raw[8]) +
+                    (p.battery_percent ? " (" + std::to_string(*p.battery_percent) + "%)\n" : " (invalid)\n");
+          m.body += "0x09 charge_state = " + stc8_hex_byte(raw[9]) +
+                    (p.battery_state ? std::string(" (") + battery_charge_state_name(*p.battery_state) + ")\n" : " (invalid)\n");
+          m.body += "0x0A led_state = " + stc8_hex_byte(raw[10]) +
+                    (p.battery_led_state ? std::string(" (") + battery_led_state_name(*p.battery_led_state) + ")\n" : " (invalid)\n");
+          m.body += "0x0B padding = " + stc8_hex_byte(raw[11]) + "\n";
+        }
         if (p.battery_percent && *p.battery_percent <= 10 && p.external_power == false) m.body += "Low battery: connect USB.";
       }
       break;

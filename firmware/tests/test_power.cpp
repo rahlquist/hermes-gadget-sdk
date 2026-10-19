@@ -22,6 +22,7 @@ TEST("STC8 battery: reads each register byte and preserves all reported telemetr
   CHECK(status->battery_adc_mv == uint16_t(3051));
   CHECK(status->battery_mv == uint16_t(4240));
   CHECK(status->battery_percent == uint8_t(100));
+  CHECK(status->battery_registers == raw);
   CHECK(status->charging == false);
   CHECK(!status->battery_present);
   CHECK(!status->external_power);

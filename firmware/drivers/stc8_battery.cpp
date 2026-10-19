@@ -24,6 +24,7 @@ std::optional<PowerStatus> Stc8Battery::read() {
 
   constexpr uint32_t kMaxReportedVoltageMv = 5000;
   PowerStatus status;
+  status.battery_registers = raw;
   const uint32_t adc_mv = read_u32_le(raw, 0);
   const uint32_t battery_mv = read_u32_le(raw, 4);
   if (adc_mv <= kMaxReportedVoltageMv) status.battery_adc_mv = static_cast<uint16_t>(adc_mv);

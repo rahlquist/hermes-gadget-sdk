@@ -1,4 +1,5 @@
 // Drives hg::App through a fake HAL the way a Hermes gateway would.
+#include <array>
 #include <deque>
 #include <map>
 #include <string>
@@ -1313,6 +1314,7 @@ TEST("power status API exposes STC8 voltage, charge state and indicator state") 
   CHECK_EQ(status["power"]["battery_led_state"].as_string(), std::string("fully_charged"));
   CHECK(status["power"]["battery_present"].is_null());
   CHECK(status["power"]["external_power"].is_null());
+  CHECK(status["power"]["battery_registers"].is_null());
 
   r.advance(4990);
   CHECK_EQ(battery.reads, 2);
@@ -1322,6 +1324,42 @@ TEST("power status API exposes STC8 voltage, charge state and indicator state") 
   CHECK_EQ((*sensors)["battery_adc_mv"].as_int(), int64_t(3051));
   CHECK_EQ((*sensors)["battery_state"].as_string(), std::string("fully_charged"));
   CHECK_EQ((*sensors)["battery_led_state"].as_string(), std::string("fully_charged"));
+  CHECK((*sensors)["battery_registers"].is_null());
+}
+
+TEST("settings: battery page lists raw STC8 registers and decoded values") {
+  const std::array<uint8_t, 12> raw = {0xeb, 0x0b, 0, 0, 0x90, 0x10, 0, 0, 0x64, 0x02, 0x02, 0xaa};
+  struct Battery : hg::Power {
+    std::array<uint8_t, 12> bytes;
+    explicit Battery(std::array<uint8_t, 12> value) : bytes(value) {}
+    std::optional<hg::PowerStatus> read() override {
+      hg::PowerStatus status;
+      status.battery_adc_mv = 3051;
+      status.battery_mv = 4240;
+      status.battery_percent = 100;
+      status.charging = false;
+      status.battery_state = hg::BatteryChargeState::FullyCharged;
+      status.battery_led_state = hg::BatteryLedState::FullyCharged;
+      status.battery_registers = bytes;
+      return status;
+    }
+    bool power_off() override { return false; }
+  } battery(raw);
+  Rig r;
+  r.hal.power = &battery;
+  r.bring_online(true);
+  CHECK(r.app.open_settings());
+  for (int i = 0; i < 8; ++i) r.app.console("cancel");
+  CHECK_EQ(r.app.model().detail, std::string("Battery and power"));
+  const std::string& body = r.app.model().body;
+  CHECK(body.find("0x00 adc_voltage[0] = 0xEB") != std::string::npos);
+  CHECK(body.find("0x03 adc_voltage[3] = 0x00") != std::string::npos);
+  CHECK(body.find("0x04 bat_voltage[0] = 0x90") != std::string::npos);
+  CHECK(body.find("0x07 bat_voltage[3] = 0x00") != std::string::npos);
+  CHECK(body.find("0x08 percentage = 0x64 (100%)") != std::string::npos);
+  CHECK(body.find("0x09 charge_state = 0x02 (fully_charged)") != std::string::npos);
+  CHECK(body.find("0x0A led_state = 0x02 (fully_charged)") != std::string::npos);
+  CHECK(body.find("0x0B padding = 0xAA") != std::string::npos);
 }
 
 TEST("power: failed readings replace stale data and shutdown requires a second local selection") {
